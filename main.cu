@@ -16,7 +16,7 @@ __global__ void mmul(float* A, float* B, float* C,
 
     float sum = 0.0f;
 
-    int num_threads = (K - 1) / TILE_WIDTH;
+    int num_threads = (K - 1) / TILE_WIDTH + 1;
     for (int tile=0; tile < num_threads; ++tile) {
         // load sharedA from A
         int within_vert_a = row < M;
@@ -40,15 +40,15 @@ __global__ void mmul(float* A, float* B, float* C,
 
         __syncthreads();
 
-        for (int i=0; i < TILE_WIDTH; ++i) {
-            sum += sharedA[ty][K] * sharedB[K][tx];
+        for (int k=0; k < TILE_WIDTH; ++k) {
+            sum += sharedA[ty][k] * sharedB[k][tx];
         }
 
         __syncthreads();
     }
 
     if (row < M && col < N) {
-        C[row * N + col] = 3.f; // sum;
+        C[row * N + col] = sum;
     }
 }
 
