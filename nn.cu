@@ -1,3 +1,8 @@
+// TODO:
+// - backprop
+// - python bindings
+// - ...
+
 #include <stdio.h>
 #include <cuda_runtime.h>
 
@@ -250,4 +255,5 @@ int main() {
     printf("First few elements of `out`:\n");
     for (int i = 0; i < outDim; ++i)
         printf("%f ", h_out[i]);
+
 }

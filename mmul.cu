@@ -3,7 +3,7 @@
 
 #define TILE_WIDTH 16
 
-__global__ void mmul(float* A, float* B, float* C,
+__global__ void shared_mmul(float* A, float* B, float* C,
                      int M, int K, int N) {
     __shared__ float sharedA[TILE_WIDTH][TILE_WIDTH];
     __shared__ float sharedB[TILE_WIDTH][TILE_WIDTH];
@@ -57,7 +57,7 @@ void initialize_random(float* arr, int n) {
         arr[i] = rand() / (float)RAND_MAX;
 }
 
-int main1() {
+int main() {
     int M = 64, K = 64, N = 64;
 
     int nA = M * K;
@@ -87,7 +87,7 @@ int main1() {
     dim3 dimBlock(TILE_WIDTH, TILE_WIDTH); // each thread block is TILE_WIDTH x TILE_WIDTH threads
     dim3 dimGrid((N + TILE_WIDTH - 1) / TILE_WIDTH, (M + TILE_WIDTH - 1) / TILE_WIDTH); // we need ≈ N x M thread blocks
 
-    mmul<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, K, N);
+    shared_mmul<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, M, K, N);
 
     cudaMemcpy(h_C, d_C, size_C, cudaMemcpyDeviceToHost);
 
@@ -106,8 +106,4 @@ int main1() {
     free(h_C);
 
     return 0;
-}
-
-int main() {
-    main1();
 }
