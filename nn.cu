@@ -250,21 +250,18 @@ void freeNN(NN* nn) {
 }
 
 
-void runNN(
-    NN* nn,
-    int nBatches,
-    float* d_in,
-    float* d_out
-) {
+void runNN(NN* nn, int nBatches, float* d_in, float* d_out_final) {
+    float* d_outPrev;
+    float* d_out;
+
     for (int i = 0; i < nn->numLayers - 1; ++i) {
         Layer layer = nn->layers[i];
-        float *d_out;
 
         cudaError_t err1 = cudaMalloc(&d_out, sizeof(float) * nn->layer.outFeatures);
         if (err1 != cudaSuccess)
             printf("error cudaMallocing d_out. error: %s\n", cudaGetErrorString(err1));
 
-        launch(
+        launchLinearRelu(
             nBatches,
             layer.inFeatures,
             layer.outFeatures,
@@ -276,16 +273,17 @@ void runNN(
 
         d_in = d_out;
 
-        // tricky, need to free the output of the previous layer
+        if (i > 0)
+            cudaFree(d_outPrev);
+
+        d_outPrev = d_out;
     }
-
-
-
-    cudaFree(d_h2);
+    cudaFree(d_outPrev);
 }
 
 
 int main() {
+    int nBatches = 64;
     int inFeatures = 3;
     int hiddenDim1 = 5;
     int hiddenDim2 = 3;
@@ -314,7 +312,7 @@ int main() {
     if (err3 != cudaSuccess)
         printf("error `cudaMalloc`ing d_out. error: %s\n", cudaGetErrorString(err3));
 
-    runNN(nn, d_in, d_out);
+    runNN(nn, nBatches, d_in, d_out);
     freeNN(nn);
 
     float* h_out = (float*)malloc(sizeOut);
