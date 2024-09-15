@@ -8,55 +8,55 @@
 
 #define TILE_WIDTH 16
 
+#define CEIL_DIV(numer, denom) (numer + denom - 1) / (denom)
+
 cudaError_t err;
 
-__global__ void vectorAddInPlace(float* base, float* addMe, int n) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid < n)
-        base[tid] += addMe[tid];
-}
 
-
-__global__ void matrixMulShared(
-    float *a,
-    float *b,
-    float *out,
-    int M,
-    int N,
-    int K
+__global__ void fusedLinear(
+    float *in, // (batch, in,)
+    float *W, // (in, out)
+    float *b, // (out,)
+    float *out, // (out,)
+    int nBatches,
+    int inDim,
+    int outDim,
 ) {
-    __shared__ float sharedA[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float sharedB[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float sharedW[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float sharedIn[TILE_WIDTH][TILE_WIDTH];
 
-    int bx = blockIdx.x;  int by = blockIdx.y;
-    int tx = threadIdx.x; int ty = threadIdx.y;
 
-    int row = by * TILE_WIDTH + ty;
-    int col = bx * TILE_WIDTH + tx;
+    int by = blockIdx.y; int thY = threadIdx.y;
+    int bx = blockIdx.x; int thX = threadIdx.x;
+
+    int batchIdx = by * TILE_WIDTH + thY;
+    int outFeatureIdx = bx * TILE_WIDTH + thX;
 
     float sum = 0.0f;
+    for (int tileIdx = 0; tileIdx < CEIL_DIV(K, TILE_WIDTH) + 1; ++tileIdx) {
+        int inFeatureIdxIn = tileIdx * TILE_WIDTH + thX;
+        bool shouldLoadIn = batchIdx < nBatches && inFeatureIdxIn < inDim;
+        sharedIn[thY][thX] = shouldLoadA ? a[batchIdx * inDim + inFeatureIdxIn] : 0.0f;
 
-    for (int t = 0; t < (K - 1) / TILE_WIDTH + 1; ++t) {
-        if (row < M && t * TILE_WIDTH + tx < K)
-            sharedA[ty][tx] = a[row * K + t * TILE_WIDTH + tx];
-        else
-            sharedA[ty][tx] = 0.0f;
-
-        if (col < N && t * TILE_WIDTH + ty < K)
-            sharedB[ty][tx] = b[(t * TILE_WIDTH + ty) * N + col];
-        else
-            sharedB[ty][tx] = 0.0f;
+        int inFeatureIdxW = tileIdx * TILE_WIDTH + thY;
+        bool shouldLoadW = outFeatureIdx < outDim && inFeatureIdxW < inDim;
+        sharedW[thY][thX] = shouldLoadB ? b[inFeatureIdxW * outDim + outFeatureIdx] : 0.0f;
 
         __syncthreads();
 
         for (int k = 0; k < TILE_WIDTH; ++k)
-            sum += sharedA[ty][k] * sharedB[k][tx];
+            sum += sharedIn[thY][k] * sharedW[k][thX]
 
         __syncthreads();
     }
 
-    if (row < M && col < N)
-        out[row * N + col] = sum;
+    sum += b[outFeatureIdx]; // bias
+
+    sum *= (sum > 0); // ReLU
+
+    int outIdx = batchIdx * outDim + outFeatureIdx;
+    if (batchIdx < batches && col < outDim)
+        out[outIdx] = sum;
 }
 
 
@@ -71,8 +71,8 @@ void initMatrixZeros(float *mat, int n_elem) {
         mat[i] = 0;
 }
 
-
 void linear(
+    int nBatches,
     int inDim,
     int outDim,
     float* d_in,
@@ -80,13 +80,13 @@ void linear(
     float* d_b,
     float* d_out
 ) {
-    dim3 dimGrid((outDim + TILE_WIDTH - 1) / TILE_WIDTH);
-    dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
-    matrixMulShared<<<dimGrid, dimBlock>>>(d_in, d_W, d_out, 1, outDim, inDim);
+    dim3 gridDim_(CEIL_DIV(N, TILE_WIDTH), CEIL_DIV(M, TILE_WIDTH))
+    dim3 blockDim_(TILE_WIDTH, TILE_WIDTH);
 
-    int threadsPerBlock = 256; // A common choice, can be adjusted based on your GPU
-    int blocks = (outDim + threadsPerBlock - 1) / threadsPerBlock;
-    vectorAddInPlace<<<blocks, threadsPerBlock>>>(d_out, d_b, outDim);
+    fusedLinear<<<gridDim_, blockDim_>>>(
+        d_in, d_W, d_b, d_out,
+        nBatches, inDim, outDim
+    );
 }
 
 typedef struct NN {
