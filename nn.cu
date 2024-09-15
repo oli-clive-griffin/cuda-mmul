@@ -251,7 +251,6 @@ void freeNN(NN* nn) {
 
 
 void runNN(NN* nn, int nBatches, float* d_in, float* d_out_final) {
-    float* d_outPrev;
     float* d_out;
 
     for (int i = 0; i < nn->numLayers - 1; ++i) {
@@ -262,23 +261,31 @@ void runNN(NN* nn, int nBatches, float* d_in, float* d_out_final) {
             printf("error cudaMallocing d_out. error: %s\n", cudaGetErrorString(err1));
 
         launchLinearRelu(
-            nBatches,
-            layer.inFeatures,
-            layer.outFeatures,
-            d_in,
-            layer.d_W,
-            layer.d_b,
-            d_out
+            nBatches, layer.inFeatures, layer.outFeatures,
+            d_in, layer.d_W, layer.d_b, d_out
         );
 
-        d_in = d_out;
-
+        // weird order makes is so that we keep a lagged pointer to the previous output,
+        // always freeing it before then reassigning it to the new previous output
         if (i > 0)
-            cudaFree(d_outPrev);
+            cudaFree(d_in);
 
-        d_outPrev = d_out;
+        // note that while this looks a bit weird, `d_out` is next given a new pointer
+        d_in = d_out;
     }
-    cudaFree(d_outPrev);
+
+    Layer lastLayer = nn->layers[nn->numLayers - 1];
+    launchBareLinear(
+        nBatches,
+        lastLayer.inFeatures,
+        lastLayer.outFeatures,
+        d_in,
+        lastLayer.d_W,
+        lastLayer.d_b,
+        d_out_final // <-------
+    );
+
+    cudaFree(d_in);
 }
 
 
